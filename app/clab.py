@@ -1,0 +1,109 @@
+"""
+Small wrapper around the `containerlab` CLI.
+
+This module just calls the `clab` binary for deploy/destroy/inspect and captures
+stdout/stderr so the API can return a structured result instead of dealing with
+raw subprocess output.
+
+Return a `ClabResult` so callers always get the same shape back.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+import subprocess
+from typing import Optional, Sequence
+
+
+@dataclass
+class ClabResult:
+    """Result of a `clab` subprocess execution"""
+    return_code: int
+    stdout: str
+    stderr: str
+
+
+def _run(args: Sequence[str], cwd: Optional[Path] = None) -> ClabResult:
+    """
+    Execute a subprocess command and capture its output.
+
+    Args:
+        args: Command and arguments, e.g. ["clab", "inspect", "-t", "..."].
+        cwd: Optional working directory for the process.
+
+    Returns:
+        ClabResult containing return code, stdout and stderr.
+    """
+    p = subprocess.run(
+        list(args),
+        cwd=str(cwd) if cwd else None,
+        capture_output=True, #capture both stdout and stderr
+        text=True, #decode bytes to str using system encoding
+    )
+    return ClabResult(p.returncode, p.stdout, p.stderr)
+
+
+def deploy(topology_file: Path, name: Optional[str] = None, reconfigure: bool = False) -> ClabResult:
+    """
+    Deploy a Containerlab topology.
+
+    Args:
+        topology_file: Path to a topology YAML file.
+        name: Optional explicit lab name (Containerlab `--name`).
+        reconfigure: If True, pass `--reconfigure` to clab.
+
+    Returns:
+        ClabResult with the subprocess result.
+    """
+    if not topology_file.exists():
+        return ClabResult(1, "", f"Topology file not found: {topology_file}")
+
+    cmd = ["clab", "deploy", "-t", str(topology_file)]
+    if name:
+        cmd += ["--name", name]
+    if reconfigure:
+        cmd += ["--reconfigure"]
+
+    #run in the topology dir so relative paths work
+    return _run(cmd, cwd=topology_file.parent)
+
+
+def destroy(topology_file: Path, name: Optional[str] = None) -> ClabResult:
+    """
+    Destroy a deployed Containerlab topology.
+
+    Args:
+        topology_file: Path to the topology YAML file used for deployment.
+        name: Optional explicit lab name (Containerlab `--name`).
+
+    Returns:
+        ClabResult 
+    """    
+    if not topology_file.exists():
+        return ClabResult(1, "", f"Topology file not found: {topology_file}")
+
+    cmd = ["clab", "destroy", "-t", str(topology_file)]
+    if name:
+        cmd += ["--name", name]
+
+    return _run(cmd, cwd=topology_file.parent)
+
+
+def inspect(topology_file: Path, name: Optional[str] = None) -> ClabResult:
+    """
+    Inspect a Containerlab topology (runtime state).
+
+    Args: same like destroy()
+
+    Returns:
+        ClabResult 
+    """    
+    if not topology_file.exists():
+        return ClabResult(1, "", f"Topology file not found: {topology_file}")
+
+    cmd = ["clab", "inspect", "-t", str(topology_file)]
+    if name:
+        cmd += ["--name", name]
+
+    return _run(cmd, cwd=topology_file.parent)

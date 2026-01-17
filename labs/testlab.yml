@@ -1,0 +1,42 @@
+name: testlab
+
+topology:
+  nodes:
+    h1:
+      kind: linux
+      image: wbitt/network-multitool:latest
+      exec:
+        - ip link set eth1 up
+        - ip addr add 10.0.0.1/24 dev eth1
+
+    h2:
+      kind: linux
+      image: wbitt/network-multitool:latest
+      exec:
+        - ip link set eth1 up
+        - ip addr add 10.0.0.2/24 dev eth1
+
+  links:
+    - endpoints: ["h1:eth1", "h2:eth1"]
+
+# name: testlab this one didnt run and set containers into restart loop
+# need to use the right image name which is wbitt/network-multitool:latest for arm
+
+# topology:
+#   nodes:
+#     h1:
+#       kind: linux
+#       image: ghcr.io/hellt/network-multitool:latest
+#       exec:
+#         - ip link set eth1 up
+#         - ip addr add 10.0.0.1/24 dev eth1
+
+#     h2:
+#       kind: linux
+#       image: ghcr.io/hellt/network-multitool:latest
+#       exec:
+#         - ip link set eth1 up
+#         - ip addr add 10.0.0.2/24 dev eth1
+
+#   links:
+#     - endpoints: ["h1:eth1", "h2:eth1"]

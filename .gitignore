@@ -1,4 +1,11 @@
 .venv/
 __pycache__/
+*.pyc
 data/
+lab-runs/
+**/lab-runs/
+*.log
 .vscode/
+.idea/
+clab-*/
+**/clab-*/
