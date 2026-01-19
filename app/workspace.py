@@ -7,7 +7,7 @@ A workspace is a dedicated directory under `data/lab-runs/` that holds:
 """
 
 from __future__ import annotations
-
+import re
 from dataclasses import dataclass
 from pathlib import Path
 import shutil
@@ -80,6 +80,25 @@ def resolve_template_yaml(labs_dir: Path, lab_name: str) -> Path:
         raise FileNotFoundError(f"Lab not found: {lab_name}")
     return f
 
+def workspace_yaml_path(ws: Workspace, lab_name: str) -> Path:
+    return ws.path / f"{lab_name}.yml"
+
+def ensure_topology_in_workspace(template_yaml: Path, ws: Workspace, clab_name: str) -> Path:
+    dest = ws.path / template_yaml.name
+    if not dest.exists():
+        shutil.copy2(template_yaml, dest)
+    _rewrite_topology_name(dest, clab_name)
+    return dest
+
+def _rewrite_topology_name(yaml_path: Path, clab_name: str) -> None:
+    txt = yaml_path.read_text(encoding="utf-8")
+    pattern = r"(?m)^\s*name\s*:\s*.*$"
+    if re.search(pattern, txt):
+        txt = re.sub(pattern, f"name: {clab_name}", txt, count=1)
+    else:
+        txt = f"name: {clab_name}\n\n{txt}"
+    yaml_path.write_text(txt, encoding="utf-8")
+
 
 def copy_topology_into_workspace(template_yaml: Path, ws: Workspace) -> Path:
     """
@@ -91,9 +110,6 @@ def copy_topology_into_workspace(template_yaml: Path, ws: Workspace) -> Path:
     Args:
         template_yaml: Source template file.
         ws: Target workspace.
-
-    Returns:
-        Path to the copied YAML file inside the workspace.
     """
     dest = ws.path / template_yaml.name
     shutil.copy2(template_yaml, dest)
@@ -107,8 +123,5 @@ def make_clab_name(ws: Workspace, topology_stem: str) -> str:
     Args:
         ws: Workspace object.
         topology_stem: YAML stem (e.g. "testlab").
-
-    Returns:
-        A short, readable lab name.
     """
     return f"ws-{ws.id[:8]}-{topology_stem}"

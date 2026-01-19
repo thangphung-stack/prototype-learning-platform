@@ -47,6 +47,21 @@ def create_ws():
     ws = workspace.create_workspace(RUNS_DIR)
     return {"workspace_id": ws.id}
 
+@app.get("/workspaces/{ws_id}/labs")
+def list_workspace_labs(ws_id: str):
+    try:
+        ws = workspace.ensure_workspace_exists(RUNS_DIR, ws_id)
+        
+        template_labs = []
+        for f in LABS_DIR.glob("*.yml"):
+            in_ws = (ws.path / f.name).exists()
+            template_labs.append({
+            "id": f.stem, "filename": f.name, "in_workspace": in_ws
+            })
+
+        return {"workspace_id": ws.id, "labs": template_labs}
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 @app.post("/workspaces/{ws_id}/deploy/{lab_name}")
 def deploy(ws_id: str, lab_name: str):
@@ -62,10 +77,10 @@ def deploy(ws_id: str, lab_name: str):
     try:
         ws = workspace.ensure_workspace_exists(RUNS_DIR, ws_id)
         tpl = workspace.resolve_template_yaml(LABS_DIR, lab_name)
-        ws_yaml = workspace.copy_topology_into_workspace(tpl, ws)
 
         clab_name = workspace.make_clab_name(ws, tpl.stem)
-        r = clab.deploy(ws_yaml, name=clab_name)
+        ws_yaml = workspace.ensure_topology_in_workspace(tpl, ws, clab_name=clab_name)
+        r = clab.deploy(ws_yaml, reconfigure=True)
 
         return {"workspace_id": ws.id, "clab_name": clab_name, **r.__dict__}
     except FileNotFoundError as e:
@@ -84,14 +99,13 @@ def destroy(ws_id: str, lab_name: str):
     """
     try:
         ws = workspace.ensure_workspace_exists(RUNS_DIR, ws_id)
-        ws_yaml = ws.path / f"{lab_name}.yml"
+        ws_yaml = workspace.workspace_yaml_path(ws, lab_name)
         if not ws_yaml.exists():
             raise FileNotFoundError(f"Workspace topology not found: {ws_yaml}")
 
-        clab_name = workspace.make_clab_name(ws, lab_name)
-        r = clab.destroy(ws_yaml, name=clab_name)
+        r = clab.destroy(ws_yaml, cleanup=True)
 
-        return {"workspace_id": ws.id, "clab_name": clab_name, **r.__dict__}
+        return {"workspace_id": ws.id, **r.__dict__}
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -106,13 +120,75 @@ def inspect(ws_id: str, lab_name: str):
     """
     try:
         ws = workspace.ensure_workspace_exists(RUNS_DIR, ws_id)
-        ws_yaml = ws.path / f"{lab_name}.yml"
+        ws_yaml = workspace.workspace_yaml_path(ws, lab_name)
         if not ws_yaml.exists():
             raise FileNotFoundError(f"Workspace topology not found: {ws_yaml}")
 
-        clab_name = workspace.make_clab_name(ws, lab_name)
-        r = clab.inspect(ws_yaml, name=clab_name)
+        r = clab.inspect(ws_yaml)
+        return {"workspace_id": ws.id, **r.__dict__}
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
-        return {"workspace_id": ws.id, "clab_name": clab_name, **r.__dict__}
+@app.get("/workspaces/{ws_id}/status/{lab_name}")
+def status(ws_id: str, lab_name: str):
+    try:
+        ws = workspace.ensure_workspace_exists(RUNS_DIR, ws_id)
+        ws_yaml = workspace.workspace_yaml_path(ws, lab_name)
+        
+        yaml_present = ws_yaml.exists()
+        clab_name = workspace.make_clab_name(ws, lab_name)
+
+        if not yaml_present:
+            return {
+                "workspace_id": ws.id,
+                "lab_name": lab_name,
+                "clab_name": clab_name,
+                "yaml_present": False,
+                "running": False,
+                "inspect": None
+            }
+        
+        r = clab.inspect(ws_yaml, name=clab_name)
+        running = (r.return_code == 0)
+        return {
+            "workspace_id": ws.id,
+            "lab_name": lab_name,
+            "clab_name": clab_name,
+            "yaml_present": True,
+            "running": running,
+            "inspect": {
+                "return_code": r.return_code,
+                "stdout": r.stdout,
+                "stderr": r.stderr
+            }
+        }
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+@app.post("/workspaces/{ws_id}/reset/{lab_name}")
+def reset(ws_id: str, lab_name: str):
+    try:
+        ws = workspace.ensure_workspace_exists(RUNS_DIR, ws_id)
+        tpl = workspace.resolve_template_yaml(LABS_DIR, lab_name)
+        clab_name = workspace.make_clab_name(ws, tpl.stem)
+        ws_yaml = workspace.ensure_topology_in_workspace(tpl, ws, clab_name=clab_name)
+
+        r = clab.deploy(ws_yaml, reconfigure=True)
+        return {
+            "workspace_id": ws.id,
+            "clab_name": clab_name,
+            **r.__dict__
+        }
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.delete("/workspaces/{ws_id}")
+def cleanup_workspace(ws_id: str):
+    try:
+        ws = workspace.ensure_workspace_exists(RUNS_DIR, ws_id)
+        shutil.rmtree(ws.path)
+        return {"message": f"Workspace {ws_id} deleted successfully."}
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
