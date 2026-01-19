@@ -12,7 +12,7 @@ Directories structure:
 """
 from fastapi import FastAPI, HTTPException
 from pathlib import Path
-
+import shutil
 from app import clab, workspace
 
 app = FastAPI()
@@ -136,24 +136,21 @@ def status(ws_id: str, lab_name: str):
         ws_yaml = workspace.workspace_yaml_path(ws, lab_name)
         
         yaml_present = ws_yaml.exists()
-        clab_name = workspace.make_clab_name(ws, lab_name)
 
         if not yaml_present:
             return {
                 "workspace_id": ws.id,
                 "lab_name": lab_name,
-                "clab_name": clab_name,
                 "yaml_present": False,
                 "running": False,
                 "inspect": None
             }
         
-        r = clab.inspect(ws_yaml, name=clab_name)
+        r = clab.inspect(ws_yaml)
         running = (r.return_code == 0)
         return {
             "workspace_id": ws.id,
             "lab_name": lab_name,
-            "clab_name": clab_name,
             "yaml_present": True,
             "running": running,
             "inspect": {

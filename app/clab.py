@@ -59,9 +59,7 @@ def deploy(topology_file: Path, reconfigure: bool = False) -> ClabResult:
     if not topology_file.exists():
         return ClabResult(1, "", f"Topology file not found: {topology_file}")
 
-    cmd = ["clab"]
-    cmd += ["-t", str(topology_file)]    
-    cmd += ["deploy"]                    
+    cmd = ["clab","-t", str(topology_file),"deploy"]                    
     if reconfigure:
         cmd += ["--reconfigure"] 
     #run in the topology dir so relative paths work
@@ -83,9 +81,7 @@ def destroy(topology_file: Path, name: Optional[str] = None, cleanup: bool = Fal
     if not topology_file.exists():
         return ClabResult(1, "", f"Topology file not found: {topology_file}")
 
-    cmd = ["clab"]
-    cmd += ["-t", str(topology_file)]    
-    cmd += ["destroy"]                   
+    cmd = ["clab", "-t", str(topology_file), "destroy"]                  
     if cleanup:
         cmd += ["--cleanup"]
 
@@ -104,8 +100,6 @@ def inspect(topology_file: Path, name: Optional[str] = None) -> ClabResult:
     if not topology_file.exists():
         return ClabResult(1, "", f"Topology file not found: {topology_file}")
 
-    cmd = ["clab"]
-    cmd += ["-t", str(topology_file)]    
-    cmd += ["inspect"]
+    cmd = ["clab", "-t", str(topology_file), "inspect"]
 
     return _run(cmd, cwd=topology_file.parent)
