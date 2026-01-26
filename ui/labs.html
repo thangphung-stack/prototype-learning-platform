@@ -1,0 +1,116 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Labs</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 980px; margin: 40px auto; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border-bottom: 1px solid #ddd; padding: 10px; text-align: left; }
+    button { padding: 8px 12px; }
+    .topbar { display: flex; justify-content: space-between; align-items: center; }
+    .err { color: #b00020; white-space: pre-wrap; margin-top: 10px; }
+    code { background: #f3f3f3; padding: 2px 6px; border-radius: 6px; }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <h1>Choose a lab</h1>
+    <button id="btnLogout">Logout</button>
+  </div>
+
+  <p>Workspace: <code id="wsId">…</code></p>
+  <div id="msg" class="err"></div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Lab</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody id="rows"></tbody>
+  </table>
+
+  <script>
+    const rows = document.getElementById("rows");
+    const msg = document.getElementById("msg");
+    const wsIdEl = document.getElementById("wsId");
+
+    function setMsg(text) { msg.textContent = text || ""; }
+
+    async function ensureNotInActiveLab() {
+      const r = await fetch("/me/active", { credentials: "include" });
+      if (!r.ok) return;
+      const j = await r.json();
+      if (j.active_lab) {
+        // lock: if a lab is active, force them to that lab page
+        window.location.href = `/ui/lab.html?lab=${encodeURIComponent(j.active_lab)}`;
+      }
+    }
+
+    async function loadLabs() {
+      setMsg("");
+      rows.innerHTML = "<tr><td colspan='2'>Loading…</td></tr>";
+
+      const res = await fetch("/me/labs", { credentials: "include" });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setMsg(data.detail || `Failed to load labs (HTTP ${res.status})`);
+        rows.innerHTML = "";
+        return;
+      }
+
+      const data = await res.json();
+      wsIdEl.textContent = data.workspace_id || "unknown";
+
+      rows.innerHTML = "";
+      for (const lab of data.labs) {
+        const tr = document.createElement("tr");
+
+        const tdName = document.createElement("td");
+        tdName.textContent = lab.id;
+        tr.appendChild(tdName);
+
+        const tdBtn = document.createElement("td");
+        const btnDeploy = document.createElement("button");
+        btnDeploy.textContent = "Deploy";
+        btnDeploy.onclick = async () => {
+          setMsg("");
+          btnDeploy.disabled = true;
+
+          const r = await fetch(`/me/deploy/${lab.id}`, {
+            method: "POST",
+            credentials: "include"
+          });
+          const j = await r.json().catch(() => ({}));
+          btnDeploy.disabled = false;
+
+          if (!r.ok || j.return_code !== 0) {
+            setMsg(j.detail || j.stderr || `Deploy failed (HTTP ${r.status})`);
+            return;
+          }
+
+          // go to control page
+          window.location.href = `/ui/lab.html?lab=${encodeURIComponent(lab.id)}`;
+        };
+
+        tdBtn.appendChild(btnDeploy);
+        tr.appendChild(tdBtn);
+
+        rows.appendChild(tr);
+      }
+    }
+
+    document.getElementById("btnLogout").onclick = async () => {
+      await fetch("/logout", { method: "POST", credentials: "include" });
+      window.location.href = "/ui/";
+    };
+
+    (async () => {
+      await ensureNotInActiveLab();
+      await loadLabs();
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,53 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Join Lab</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 720px; margin: 40px auto; }
+    input, button { font-size: 16px; padding: 10px; }
+    .row { display: flex; gap: 10px; }
+    .err { color: #b00020; margin-top: 10px; white-space: pre-wrap; }
+    .ok { color: #1b5e20; margin-top: 10px; }
+  </style>
+</head>
+<body>
+  <h1>Join a lab session</h1>
+  <p>Enter the join code from your lecturer.</p>
+
+  <div class="row">
+    <input id="code" placeholder="Join code" />
+    <button id="btnJoin">Join</button>
+  </div>
+
+  <div id="msg" class="err"></div>
+
+  <script>
+    const msg = document.getElementById("msg");
+    document.getElementById("btnJoin").addEventListener("click", async () => {
+      msg.textContent = "";
+      const code = document.getElementById("code").value.trim();
+      if (!code) {
+        msg.textContent = "Please enter a join code.";
+        return;
+      }
+
+      const res = await fetch("/join", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        credentials: "include",
+        body: JSON.stringify({ code })
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        msg.textContent = data.detail || `Join failed (HTTP ${res.status})`;
+        return;
+      }
+
+      // Cookie is now set by server. Go to labs page.
+      window.location.href = "/ui/labs.html";
+    });
+  </script>
+</body>
+</html>

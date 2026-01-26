@@ -119,9 +119,23 @@ def copy_topology_into_workspace(template_yaml: Path, ws: Workspace) -> Path:
 def make_clab_name(ws: Workspace, topology_stem: str) -> str:
     """
     Build a short Containerlab deployment name for a workspace+topology.
-
-    Args:
-        ws: Workspace object.
-        topology_stem: YAML stem (e.g. "testlab").
+    Args:ws, topology_stem: The topology YAML file stem (without .yml).
     """
     return f"ws-{ws.id[:8]}-{topology_stem}"
+
+def active_lab_path(ws: Workspace) -> Path:
+    return ws.path / ".active_lab"
+
+def get_active_lab(ws: Workspace) -> str | None:
+    p = active_lab_path(ws)
+    if not p.exists():
+        return None
+    return p.read_text(encoding="utf-8").strip() or None
+
+def set_active_lab(ws: Workspace, lab_name: str) -> None:
+    active_lab_path(ws).write_text(lab_name, encoding="utf-8")
+
+def clear_active_lab(ws: Workspace) -> None:
+    p = active_lab_path(ws)
+    if p.exists():
+        p.unlink()

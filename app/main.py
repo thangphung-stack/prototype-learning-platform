@@ -21,6 +21,8 @@ from app.student_auth import (
     JoinCodeStore,
     SESSION_COOKIE_NAME
 )
+from fastapi.staticfiles import StaticFiles
+import yaml
 
 app = FastAPI()
 
@@ -31,6 +33,9 @@ student_sessions = StudentSessionStore()
 BASE_DIR = Path(__file__).resolve().parents[1]
 LABS_DIR = BASE_DIR / "labs"
 RUNS_DIR = BASE_DIR / "data" / "lab-runs"
+UI_DIR = BASE_DIR / "ui"
+
+app.mount("/ui", StaticFiles(directory=str(UI_DIR), html=True), name="ui")
 
 ######################## ---- Student me endpoints ----############################
 def get_me_workspace(session_id: Optional[str] = Cookie(default=None, alias=SESSION_COOKIE_NAME) 
@@ -95,6 +100,21 @@ def join(req: JoinRequest, response: Response):
     )
     return {"ok": True, "workspace_id": ws_id}
 
+@app.get("/me/active")
+def me_active(ws: workspace.Workspace = Depends(get_me_workspace)):
+    lab = workspace.get_active_lab(ws)
+    return {"workspace_id": ws.id, "active_lab": lab}
+
+@app.get("/me/nodes/{lab_name}")
+def me_nodes(lab_name: str, ws: workspace.Workspace = Depends(get_me_workspace)):
+    ws_yaml = workspace.workspace_yaml_path(ws, lab_name)
+    if not ws_yaml.exists():
+        raise HTTPException(status_code=404, detail="Workspace topology not found")
+    
+    data = yaml.safe_load(ws_yaml.read_text(encoding="utf-8")) or {}
+    nodes = list(((data.get("topology") or {}).get("nodes") or {}).keys())
+    return {"workspace_id": ws.id, "lab_name": lab_name, "nodes": nodes}
+
 @app.get("/me/labs")
 def me_labs(ws: workspace.Workspace = Depends(get_me_workspace)):
     """List templates + show whether each YAML already exists in the student's workspace."""
@@ -108,25 +128,39 @@ def me_labs(ws: workspace.Workspace = Depends(get_me_workspace)):
 
 @app.post("/me/deploy/{lab_name}")
 def me_deploy(lab_name: str, ws: workspace.Workspace = Depends(get_me_workspace)):
-    """Deploy a lab for the current student (workspace comes from cookie)."""
+    active = workspace.get_active_lab(ws)
+    if active and active != lab_name:
+        raise HTTPException(status_code=409, detail=f"Another lab is active: {active}. Please destroy it first.")
+
     tpl = workspace.resolve_template_yaml(LABS_DIR, lab_name)
     clab_name = workspace.make_clab_name(ws, tpl.stem)
     ws_yaml = workspace.ensure_topology_in_workspace(tpl, ws, clab_name=clab_name)
+
     r = clab.deploy(ws_yaml, reconfigure=True)
+
+    if r.return_code == 0:
+        workspace.set_active_lab(ws, lab_name)
+
     return {"workspace_id": ws.id, "clab_name": clab_name, **r.__dict__}
 
 @app.post("/me/destroy/{lab_name}")
 def me_destroy(lab_name: str, ws: workspace.Workspace = Depends(get_me_workspace)):
-    """Destroy the student's lab deployment (if the workspace YAML exists)."""
     ws_yaml = workspace.workspace_yaml_path(ws, lab_name)
     if not ws_yaml.exists():
         raise HTTPException(status_code=404, detail=f"Workspace topology not found: {ws_yaml}")
+
     r = clab.destroy(ws_yaml, cleanup=True)
+
+    if r.return_code == 0:
+        workspace.clear_active_lab(ws)
     return {"workspace_id": ws.id, **r.__dict__}
 
 @app.post("/me/reset/{lab_name}")
 def me_reset(lab_name: str, ws: workspace.Workspace = Depends(get_me_workspace)):
-    """Quick reset = (re)deploy with --reconfigure (nice for 'start fresh' button)."""
+    active = workspace.get_active_lab(ws)
+    if active and active != lab_name:
+        raise HTTPException(status_code=409, detail=f"Another lab is active: {active}. Please destroy it first.")
+
     tpl = workspace.resolve_template_yaml(LABS_DIR, lab_name)
     clab_name = workspace.make_clab_name(ws, tpl.stem)
     ws_yaml = workspace.ensure_topology_in_workspace(tpl, ws, clab_name=clab_name)
@@ -154,11 +188,14 @@ def me_status(lab_name: str, ws: workspace.Workspace = Depends(get_me_workspace)
         "inspect": r.__dict__
     }
 
+@app.post("/logout")
+def logout(response: Response):
+    response.delete_cookie(key=SESSION_COOKIE_NAME)
+    return {"ok": True}
 
 @app.get("/")
 def home():
     return {"message": "hello from prototype-learning-platform"}
-
 
 @app.get("/list")
 def list_labs():

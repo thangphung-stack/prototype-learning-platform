@@ -1,0 +1,213 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Lab Control</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 1100px; margin: 30px auto; }
+    .row { display: flex; gap: 10px; flex-wrap: wrap; margin: 12px 0; }
+    button { padding: 10px 14px; }
+    .err { color: #b00020; white-space: pre-wrap; margin-top: 10px; }
+    .topo { width: 100%; border: 1px solid #ddd; border-radius: 16px; padding: 10px; background: #fff; }
+    .topo img { width: 100%; height: auto; border-radius: 12px; display: block; }
+    .card { border: 1px solid #ddd; border-radius: 16px; padding: 14px; margin-top: 16px; }
+    .nodes { display: flex; gap: 10px; flex-wrap: wrap; }
+    dialog { width: min(900px, 95vw); border: 1px solid #ddd; border-radius: 16px; padding: 14px; }
+    pre { background: #f3f3f3; padding: 12px; border-radius: 12px; overflow: auto; }
+    .dialog-actions { display:flex; justify-content:flex-end; margin-top:10px; }
+  </style>
+</head>
+<body>
+  <h1 id="title">Lab</h1>
+
+  <div class="row">
+    <button id="btnStatus">Status</button>
+    <button id="btnReset">Reset</button>
+    <button id="btnDestroy">Destroy</button>
+    <button id="btnInstr">Instruction</button>
+  </div>
+
+  <div id="msg" class="err"></div>
+
+  <!-- BIG topology image first -->
+  <div class="topo">
+    <img id="topoImg" alt="Topology" />
+    <div id="topoFallback" style="display:none; padding: 12px;">
+      No topology image found yet. (Later you can add one under labs/<lab>/topology.png)
+    </div>
+  </div>
+
+  <!-- Nodes area -->
+  <div class="card">
+    <h2>Nodes</h2>
+    <div id="nodes" class="nodes">Loading nodes…</div>
+    <p style="margin-top:10px; color:#555;">
+      Terminal pop-up will be implemented with WebSockets later.
+    </p>
+  </div>
+
+  <!-- Status modal -->
+  <dialog id="statusDialog">
+    <h3>Status</h3>
+    <pre id="statusText">Loading…</pre>
+    <div class="dialog-actions">
+      <button id="closeStatus">Close</button>
+    </div>
+  </dialog>
+
+  <!-- Instruction modal -->
+  <dialog id="instrDialog">
+    <h3>Instruction</h3>
+    <pre id="instrText">Loading…</pre>
+    <div class="dialog-actions">
+      <button id="closeInstr">Close</button>
+    </div>
+  </dialog>
+
+  <!-- Node terminal placeholder modal -->
+  <dialog id="nodeDialog">
+    <h3 id="nodeTitle">Node</h3>
+    <p>Terminal will appear here later (WebSocket).</p>
+    <div class="dialog-actions">
+      <button id="closeNode">Close</button>
+    </div>
+  </dialog>
+
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const lab = params.get("lab");
+    const msg = document.getElementById("msg");
+
+    const statusDialog = document.getElementById("statusDialog");
+    const statusText = document.getElementById("statusText");
+
+    const instrDialog = document.getElementById("instrDialog");
+    const instrText = document.getElementById("instrText");
+
+    const nodeDialog = document.getElementById("nodeDialog");
+    const nodeTitle = document.getElementById("nodeTitle");
+
+    function setMsg(t){ msg.textContent = t || ""; }
+
+    if (!lab) {
+      document.body.innerHTML = "Missing ?lab=";
+      throw new Error("Missing lab");
+    }
+    document.getElementById("title").textContent = `Lab: ${lab}`;
+
+    // LOCK navigation: if another lab is active, redirect to it.
+    async function enforceActiveLab() {
+      const r = await fetch("/me/active", { credentials: "include" });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) return;
+
+      if (!j.active_lab) {
+        // no active lab -> should not be on lab control page
+        window.location.href = "/ui/labs.html";
+        return;
+      }
+      if (j.active_lab !== lab) {
+        window.location.href = `/ui/lab.html?lab=${encodeURIComponent(j.active_lab)}`;
+        return;
+      }
+    }
+
+    // Big topology image
+    function loadTopologyImage() {
+      const img = document.getElementById("topoImg");
+      const fallback = document.getElementById("topoFallback");
+      img.src = `/labs/${encodeURIComponent(lab)}/topology.png?ts=${Date.now()}`;
+      img.onerror = () => {
+        img.style.display = "none";
+        fallback.style.display = "block";
+      };
+    }
+
+    // Node buttons from backend
+    async function loadNodes() {
+      const nodesEl = document.getElementById("nodes");
+      nodesEl.textContent = "Loading nodes…";
+
+      const r = await fetch(`/me/nodes/${encodeURIComponent(lab)}`, { credentials: "include" });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        nodesEl.textContent = "";
+        setMsg(j.detail || `Failed to load nodes (HTTP ${r.status})`);
+        return;
+      }
+
+      nodesEl.textContent = "";
+      if (!j.nodes || j.nodes.length === 0) {
+        nodesEl.textContent = "No nodes found in topology.";
+        return;
+      }
+
+      for (const n of j.nodes) {
+        const b = document.createElement("button");
+        b.textContent = n;
+        b.onclick = () => {
+          nodeTitle.textContent = `Node: ${n}`;
+          nodeDialog.showModal();
+        };
+        nodesEl.appendChild(b);
+      }
+    }
+
+    async function showStatus() {
+      statusText.textContent = "Loading…";
+      statusDialog.showModal();
+
+      const r = await fetch(`/me/status/${encodeURIComponent(lab)}`, { credentials: "include" });
+      const j = await r.json().catch(() => ({}));
+      statusText.textContent = JSON.stringify(j, null, 2);
+    }
+
+    async function doReset() {
+      setMsg("");
+      const r = await fetch(`/me/reset/${encodeURIComponent(lab)}`, { method: "POST", credentials: "include" });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || j.return_code !== 0) {
+        setMsg(j.detail || j.stderr || `Reset failed (HTTP ${r.status})`);
+        return;
+      }
+      await loadNodes();
+    }
+
+    async function doDestroy() {
+      setMsg("");
+      const r = await fetch(`/me/destroy/${encodeURIComponent(lab)}`, { method: "POST", credentials: "include" });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || j.return_code !== 0) {
+        setMsg(j.detail || j.stderr || `Destroy failed (HTTP ${r.status})`);
+        return;
+      }
+      // after destroy -> go back to lab list (your requirement)
+      window.location.href = "/ui/labs.html";
+    }
+
+    async function showInstruction() {
+      instrText.textContent = "No instructions yet. Add labs/<lab>/instructions.md later.";
+      instrDialog.showModal();
+
+      // Optional later:
+      // If you add an endpoint or static file for instructions, fetch it here.
+      // For now this is a placeholder.
+    }
+
+    document.getElementById("btnStatus").onclick = showStatus;
+    document.getElementById("btnReset").onclick = doReset;
+    document.getElementById("btnDestroy").onclick = doDestroy;
+    document.getElementById("btnInstr").onclick = showInstruction;
+
+    document.getElementById("closeStatus").onclick = () => statusDialog.close();
+    document.getElementById("closeInstr").onclick = () => instrDialog.close();
+    document.getElementById("closeNode").onclick = () => nodeDialog.close();
+
+    (async () => {
+      await enforceActiveLab();
+      loadTopologyImage();
+      await loadNodes();
+    })();
+  </script>
+</body>
+</html>
