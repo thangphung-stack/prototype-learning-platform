@@ -32,11 +32,15 @@
         return;
       }
 
-      const res = await fetch("/join", {
+      // const res = await fetch("/join", {
+      //   method: "POST",
+      //   headers: {"Content-Type": "application/json"},
+      //   credentials: "include",
+      //   body: JSON.stringify({ code })
+      // });
+      const res = await fetch(`/join?code=${encodeURIComponent(code)}`, { 
         method: "POST",
-        headers: {"Content-Type": "application/json"},
-        credentials: "include",
-        body: JSON.stringify({ code })
+        credentials: "include"
       });
 
       if (!res.ok) {
