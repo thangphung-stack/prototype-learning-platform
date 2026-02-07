@@ -1,0 +1,7 @@
+{
+  "title": "Two Leafs + Two Hosts",
+  "description": "Fabric skeleton with two access domains. Useful for explaining isolation and basic connectivity patterns.",
+  "ram_mb": 670,
+  "topic": "dc-fabric",
+  "level": "basic"
+}

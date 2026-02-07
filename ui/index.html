@@ -49,6 +49,14 @@
         return;
       }
 
+      // Verify cookie works before redirect
+      const guard = await fetch("/me/active", { credentials: "include" });
+      if (!guard.ok) {
+        const g = await guard.json().catch(() => ({}));
+        msg.textContent = g.detail || "Join succeeded but session cookie was not set. Try again.";
+        return;
+      }
+
       // Cookie is now set by server. Go to labs page.
       window.location.href = "/ui/labs.html";
     });

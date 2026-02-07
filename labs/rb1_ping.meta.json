@@ -1,0 +1,7 @@
+{
+  "title": "Ping Basics",
+  "description": "Two hosts connected. Practice ping, ip addr, ip link, and basic troubleshooting.",
+  "ram_mb": 400,
+  "topic": "routing-basics",
+  "level": "basic"
+}

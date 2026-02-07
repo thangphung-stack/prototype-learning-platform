@@ -1,0 +1,7 @@
+{
+  "title": "Multiple Subnets via Router",
+  "description": "One router connects three LANs. Practice routing, reachability, and subnet reasoning.",
+  "ram_mb": 800,
+  "topic": "routing-basics",
+  "level": "advanced"
+}

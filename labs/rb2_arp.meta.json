@@ -1,0 +1,7 @@
+{
+  "title": "ARP & Interface States",
+  "description": "Inspect ARP tables, interface status, and neighbor discovery behavior.",
+  "ram_mb": 500,
+  "topic": "routing-basics",
+  "level": "basic"
+}

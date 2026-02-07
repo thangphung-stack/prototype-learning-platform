@@ -1,0 +1,7 @@
+{
+  "title": "Core with Two P Routers",
+  "description": "PE-P-P-PE chain. Use it for longer path reasoning and multi-hop troubleshooting tasks.",
+  "ram_mb": 1024,
+  "topic": "mpls-sp",
+  "level": "advanced"
+}

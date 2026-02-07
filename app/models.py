@@ -1,6 +1,6 @@
 from __future__ import annotations
 from datetime import datetime
-from sqlalchemy import String, Integer, DateTime, ForeignKey, UniqueConstraint
+from sqlalchemy import String, Integer, DateTime, ForeignKey, UniqueConstraint, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db import Base
 
@@ -20,6 +20,13 @@ class Booking(Base):
     starts_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     ends_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     seats: Mapped[int] = mapped_column(Integer)
+    #ram budget for 1 student for 1 booking
+    ram_mb_per_seat: Mapped[int] = mapped_column(Integer, default=512)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    #choose type of selection: mode (topic + level) or max lab
+    selection_type: Mapped[str | None] = mapped_column(String, nullable=True)
+    selection_key: Mapped[str | None] = mapped_column(String, nullable=True)
+    allowed_labs_json: Mapped[str] = mapped_column(Text, default="[]")
 
     lecturer = relationship("Lecturer")
 

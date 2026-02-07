@@ -1,10 +1,11 @@
-name: topo3
+name: mpls2_two_p_routers
 
 topology:
   nodes:
     h1:
       kind: linux
       image: wbitt/network-multitool:latest
+      memory: 256Mb
       exec:
         - ip link set eth1 up
         - ip addr add 10.0.0.1/24 dev eth1
@@ -12,6 +13,7 @@ topology:
     h2:
       kind: linux
       image: wbitt/network-multitool:latest
+      memory: 256Mb
       exec:
         - ip link set eth1 up
         - ip addr add 10.0.0.2/24 dev eth1

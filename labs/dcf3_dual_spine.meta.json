@@ -1,0 +1,7 @@
+{
+  "title": "Dual-Spine (Resiliency Shape)",
+  "description": "Two spines + two leafs. Great for resiliency discussion and multi-path thinking (even without routing protocols yet).",
+  "ram_mb": 900,
+  "topic": "dc-fabric",
+  "level": "advanced"
+}

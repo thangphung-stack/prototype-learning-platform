@@ -1,0 +1,7 @@
+{
+  "title": "Troubleshooting Mini-Lab",
+  "description": "Focus on debugging (routes, ARP, interface states, ping/traceroute). Topology is simple; tasks are advanced.",
+  "ram_mb": 700,
+  "topic": "routing-basics",
+  "level": "advanced"
+}

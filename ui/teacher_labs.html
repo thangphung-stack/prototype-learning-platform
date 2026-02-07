@@ -1,0 +1,240 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Select Topic/Mode</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 1200px; margin: 30px auto; padding: 0 10px; }
+    .topbar { display:flex; gap:10px; justify-content:space-between; align-items:center; }
+    button { padding: 10px 14px; font-size: 16px; }
+    code { background:#f3f3f3; padding:2px 6px; border-radius:6px; }
+    .muted { color:#666; }
+    .grid { display:grid; grid-template-columns: 1fr; gap: 12px; margin-top: 16px; }
+    details { border:1px solid #ddd; border-radius: 16px; padding: 10px 14px; background:#fff; }
+    summary { cursor:pointer; font-size: 18px; font-weight: 600; }
+    .two { display:grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 10px; }
+    .box { border:1px solid #eee; border-radius: 14px; padding: 12px; }
+    .box h3 { margin: 0 0 8px 0; }
+    table { width:100%; border-collapse: collapse; }
+    th, td { border-bottom: 1px solid #eee; padding: 8px; text-align:left; vertical-align: top; }
+    .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin: 8px 0; }
+    dialog { width: min(1100px, 95vw); border: 1px solid #ddd; border-radius: 16px; padding: 14px; }
+    .status-pill { padding:2px 8px; border-radius: 999px; background:#f3f3f3; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <div>
+      <h1 style="margin:0;">Step 1 — Choose topic + mode</h1>
+      <div class="muted">Pick a topic mode; RAM is reserved as the max lab RAM in that mode.</div>
+    </div>
+    <div class="row">
+      <button id="btnBookings">My bookings</button>
+      <button id="btnLogout">Logout</button>
+    </div>
+  </div>
+
+  <div class="row">
+    <input id="search" placeholder="Search topics/labs…" style="padding:10px; font-size:16px; width:min(520px, 100%);" />
+  </div>
+
+  <div id="topics" class="grid"></div>
+
+  <!-- Bookings modal -->
+  <dialog id="bookingsDlg">
+    <h2>My bookings</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th><th>Status</th><th>Start (local)</th><th>End (local)</th><th>Seats</th><th>RAM/seat</th><th>Join</th><th>Actions</th>
+        </tr>
+      </thead>
+      <tbody id="bookRows"></tbody>
+    </table>
+    <div class="row" style="justify-content:flex-end; margin-top:10px;">
+      <button id="closeBookings">Close</button>
+    </div>
+  </dialog>
+
+<script>
+  function token(){ return localStorage.getItem("teacher_token"); }
+  function authHeaders(){ return { "Authorization": `Bearer ${token()}` }; }
+  if (!token()) window.location.href = "/ui/teacher_login.html";
+
+  const topicsEl = document.getElementById("topics");
+  const searchEl = document.getElementById("search");
+
+  function ramFmt(mb){
+    if (mb >= 1024) return (mb/1024).toFixed(1) + " GB";
+    return mb + " MB";
+  }
+
+  function fmtUtcToLocal(utcIsoZ) {
+    if (!utcIsoZ) return "";
+    const d = new Date(utcIsoZ);
+    return new Intl.DateTimeFormat("de-DE", {
+      year:"numeric", month:"2-digit", day:"2-digit",
+      hour:"2-digit", minute:"2-digit"
+    }).format(d);
+  }
+
+  let catalog = null;
+
+  function groupByTopic(labs){
+    const m = new Map();
+    for (const lab of labs) {
+      if (!m.has(lab.topic)) m.set(lab.topic, { topic: lab.topic, basic: [], advanced: [] });
+      const t = m.get(lab.topic);
+      (lab.level === "advanced" ? t.advanced : t.basic).push(lab);
+    }
+    for (const v of m.values()) {
+      v.basic.sort((a,b)=>a.ram_mb-b.ram_mb);
+      v.advanced.sort((a,b)=>a.ram_mb-b.ram_mb);
+    }
+    return [...m.values()].sort((a,b)=>a.topic.localeCompare(b.topic));
+  }
+
+  function findModeMaxRam(topic, level){
+    const m = catalog.modes.find(x => x.topic === topic && x.level === level);
+    return m ? m.max_ram_mb : null;
+  }
+
+  function labTable(labs){
+    if (!labs.length) return `<div class="muted">No labs in this mode.</div>`;
+    const rows = labs.map(l => `
+      <tr>
+        <td><code>${l.id}</code> — ${l.title}</td>
+        <td>${ramFmt(l.ram_mb)}</td>
+        <td>${l.description || ""}</td>
+      </tr>
+    `).join("");
+    return `
+      <table>
+        <thead><tr><th>Lab</th><th>RAM</th><th>Description</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    `;
+  }
+
+  function renderTopics(filterText=""){
+    const groups = groupByTopic(catalog.labs);
+
+    const ft = filterText.trim().toLowerCase();
+    topicsEl.innerHTML = "";
+
+    for (const g of groups) {
+      // filter: match topic or any lab fields
+      const topicMatch = g.topic.toLowerCase().includes(ft);
+      const labsFlat = [...g.basic, ...g.advanced];
+      const labMatch = labsFlat.some(l =>
+        (l.id + " " + l.title + " " + l.description).toLowerCase().includes(ft)
+      );
+      if (ft && !(topicMatch || labMatch)) continue;
+
+      const basicMax = findModeMaxRam(g.topic, "basic");
+      const advMax = findModeMaxRam(g.topic, "advanced");
+
+      const div = document.createElement("details");
+      div.open = true;
+      div.innerHTML = `
+        <summary>${g.topic}</summary>
+        <div class="two">
+          <div class="box">
+            <div class="row" style="justify-content:space-between;">
+              <h3>Basic</h3>
+              <button ${basicMax==null ? "disabled" : ""} data-sel="mode" data-key="${g.topic}:basic">
+                Select Basic (max ${basicMax==null ? "—" : ramFmt(basicMax)})
+              </button>
+            </div>
+            ${labTable(g.basic)}
+          </div>
+          <div class="box">
+            <div class="row" style="justify-content:space-between;">
+              <h3>Advanced</h3>
+              <button ${advMax==null ? "disabled" : ""} data-sel="mode" data-key="${g.topic}:advanced">
+                Select Advanced (max ${advMax==null ? "—" : ramFmt(advMax)})
+              </button>
+            </div>
+            ${labTable(g.advanced)}
+          </div>
+        </div>
+      `;
+      topicsEl.appendChild(div);
+    }
+
+    // hook buttons
+    for (const btn of document.querySelectorAll("button[data-sel='mode']")) {
+      btn.onclick = () => {
+        sessionStorage.setItem("selection_type", "mode");
+        sessionStorage.setItem("selection_key", btn.getAttribute("data-key"));
+        window.location.href = "/ui/teacher_booking.html";
+      };
+    }
+  }
+
+  async function loadCatalog(){
+    const r = await fetch("/teacher/catalog", { headers: authHeaders() });
+    catalog = await r.json();
+    renderTopics("");
+  }
+
+  // bookings modal
+  const dlg = document.getElementById("bookingsDlg");
+  const bookRows = document.getElementById("bookRows");
+
+  async function loadBookings(){
+    bookRows.innerHTML = "<tr><td colspan='8'>Loading…</td></tr>";
+    const r = await fetch("/teacher/bookings", { headers: authHeaders() });
+    const j = await r.json().catch(()=>({}));
+    if (!r.ok) {
+      bookRows.innerHTML = `<tr><td colspan='8'>Failed: ${j.detail || r.status}</td></tr>`;
+      return;
+    }
+
+    bookRows.innerHTML = "";
+    for (const b of j.bookings) {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td>${b.id}</td>
+        <td><span class="status-pill">${b.status}</span></td>
+        <td>${fmtUtcToLocal(b.starts_at)}</td>
+        <td>${fmtUtcToLocal(b.ends_at)}</td>
+        <td>${b.seats}</td>
+        <td>${b.ram_mb_per_seat ?? ""}</td>
+        <td><code>${b.join_code}</code></td>
+        <td></td>
+      `;
+      const td = tr.querySelector("td:last-child");
+
+      const btnClose = document.createElement("button");
+      btnClose.textContent = "Close";
+      btnClose.onclick = async () => {
+        if (!confirm("Close booking and cleanup all workspaces?")) return;
+        const rr = await fetch(`/teacher/bookings/${b.id}/close`, { method:"POST", headers: { ...authHeaders(), "Content-Type":"application/json" }});
+        const jj = await rr.json().catch(()=>({}));
+        if (!rr.ok) alert(jj.detail || "Close failed");
+        await loadBookings();
+      };
+
+      td.appendChild(btnClose);
+      bookRows.appendChild(tr);
+    }
+  }
+
+  document.getElementById("btnBookings").onclick = async () => {
+    await loadBookings();
+    dlg.showModal();
+  };
+  document.getElementById("closeBookings").onclick = () => dlg.close();
+
+  document.getElementById("btnLogout").onclick = () => {
+    localStorage.removeItem("teacher_token");
+    window.location.href = "/ui/teacher_login.html";
+  };
+
+  searchEl.oninput = () => renderTopics(searchEl.value);
+
+  loadCatalog();
+</script>
+</body>
+</html>

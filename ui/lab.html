@@ -112,6 +112,16 @@
       }
     }
 
+    async function guardOrKick() {
+      const r = await fetch("/me/guard", { credentials: "include" });
+      if (!r.ok) {
+        // Booking ended/closed/session expired -> go back to join
+        window.location.href = "/ui/";
+        return false;
+      }
+      return true;
+    }
+
     // Big topology image
     function loadTopologyImage() {
       const img = document.getElementById("topoImg");
@@ -145,7 +155,8 @@
       for (const n of j.nodes) {
         const b = document.createElement("button");
         b.textContent = n;
-        b.onclick = () => {
+        b.onclick = async () => {
+          if (!await guardOrKick()) return;
           nodeTitle.textContent = `Node: ${n}`;
           nodeDialog.showModal();
         };
@@ -154,6 +165,7 @@
     }
 
     async function showStatus() {
+      if (!(await guardOrKick())) return;
       statusText.textContent = "Loading…";
       statusDialog.showModal();
 
@@ -163,6 +175,8 @@
     }
 
     async function doReset() {
+      if (!(await guardOrKick())) return;
+
       setMsg("");
       const r = await fetch(`/me/reset/${encodeURIComponent(lab)}`, { method: "POST", credentials: "include" });
       const j = await r.json().catch(() => ({}));
@@ -174,6 +188,8 @@
     }
 
     async function doDestroy() {
+      if (!(await guardOrKick())) return;
+
       setMsg("");
       const r = await fetch(`/me/destroy/${encodeURIComponent(lab)}`, { method: "POST", credentials: "include" });
       const j = await r.json().catch(() => ({}));
@@ -186,6 +202,8 @@
     }
 
     async function showInstruction() {
+      if (!(await guardOrKick())) return;
+
       instrText.textContent = "No instructions yet. Add labs/<lab>/instructions.md later.";
       instrDialog.showModal();
 
@@ -197,13 +215,17 @@
     document.getElementById("btnStatus").onclick = showStatus;
     document.getElementById("btnReset").onclick = doReset;
     document.getElementById("btnDestroy").onclick = doDestroy;
-    document.getElementById("btnInstr").onclick = showInstruction;
+    document.getElementById("btnInstr").onclick = async () => {
+      if (!(await guardOrKick())) return;
+      instrDialog.showModal();
+    };
 
     document.getElementById("closeStatus").onclick = () => statusDialog.close();
     document.getElementById("closeInstr").onclick = () => instrDialog.close();
     document.getElementById("closeNode").onclick = () => nodeDialog.close();
 
     (async () => {
+      if (!(await guardOrKick())) return;
       await enforceActiveLab();
       loadTopologyImage();
       await loadNodes();

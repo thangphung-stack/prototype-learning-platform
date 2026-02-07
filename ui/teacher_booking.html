@@ -1,0 +1,130 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Create Booking</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 900px; margin: 40px auto; }
+    input, button { font-size: 16px; padding: 10px; }
+    .row { display:flex; gap:12px; flex-wrap:wrap; align-items:end; }
+    .err { color:#b00020; white-space:pre-wrap; margin-top:10px; }
+    .ok  { color:#1b5e20; white-space:pre-wrap; margin-top:10px; }
+    code { background:#f3f3f3; padding:2px 6px; border-radius:6px; }
+  </style>
+</head>
+<body>
+  <a href="/ui/teacher_labs.html">← Back</a>
+  <h1>Step 2 — Booking</h1>
+
+  <p id="sel"></p>
+
+  <div class="row">
+    <div>
+      <label>Start (local)</label><br/>
+      <input id="start" type="datetime-local" />
+    </div>
+    <div>
+      <label>End (local)</label><br/>
+      <input id="end" type="datetime-local" />
+    </div>
+    <div>
+      <label>Seats</label><br/>
+      <input id="seats" type="number" value="30" min="1" />
+      <div style="font-size: 13px; color:#666" id="maxSeatsInfo">Max seats: —</div>
+    </div>
+    <button id="btnCreate">Create booking</button>
+  </div>
+
+  <div id="msg" class="err"></div>
+  <div id="ok" class="ok"></div>
+
+<script>
+  const msg = document.getElementById("msg");
+  const ok = document.getElementById("ok");
+  const maxSeatsInfo = document.getElementById("maxSeatsInfo");
+  const sel = document.getElementById("sel");
+
+  function token(){ return localStorage.getItem("teacher_token"); }
+  function authHeaders(){ return { "Authorization": `Bearer ${token()}`, "Content-Type":"application/json" }; }
+  if (!token()) window.location.href = "/ui/teacher_login.html";
+
+  const selection_type = sessionStorage.getItem("selection_type");
+  const selection_key = sessionStorage.getItem("selection_key");
+  if (!selection_type || !selection_key) window.location.href = "/ui/teacher_labs.html";
+
+  sel.innerHTML = `Selection: <code>${selection_type}</code> / <code>${selection_key}</code>`;
+
+  function toUtcIsoZ(datetimeLocalValue) {
+    if (!datetimeLocalValue) return null;
+    const d = new Date(datetimeLocalValue);
+    return d.toISOString().slice(0, 19) + "Z";
+  }
+
+  async function computeMaxSeats() {
+    msg.textContent = "";
+    const starts_at = toUtcIsoZ(document.getElementById("start").value);
+    const ends_at = toUtcIsoZ(document.getElementById("end").value);
+    if (!starts_at || !ends_at) return;
+
+    // ask backend for ram_mb_per_seat by creating a tiny dry-run using catalog? easiest: call /teacher/catalog then derive on frontend
+    const catRes = await fetch("/teacher/catalog", { headers: { "Authorization": `Bearer ${token()}` } });
+    const catalog = await catRes.json();
+
+    let ram_mb_per_seat = 1024;
+
+    if (selection_type === "mode") {
+      const [topic, level] = selection_key.split(":");
+      const m = catalog.modes.find(x => x.topic === topic && x.level === level);
+      ram_mb_per_seat = m.max_ram_mb;
+    } else {
+      const chosen = catalog.labs.find(x => x.id === selection_key);
+      ram_mb_per_seat = chosen.ram_mb;
+    }
+
+    const url = `/teacher/capacity?starts_at=${encodeURIComponent(starts_at)}&ends_at=${encodeURIComponent(ends_at)}&ram_mb_per_seat=${encodeURIComponent(ram_mb_per_seat)}`;
+    const r = await fetch(url, { headers: { "Authorization": `Bearer ${token()}` } });
+    const j = await r.json().catch(()=>({}));
+
+    if (!r.ok) {
+      msg.textContent = j.detail || `Failed capacity check (HTTP ${r.status})`;
+      return;
+    }
+
+    maxSeatsInfo.textContent = `Max seats: ${j.max_seats} (capacity_mb=${j.capacity_mb}, reserved_mb=${j.reserved_mb})`;
+    const seatsInput = document.getElementById("seats");
+    seatsInput.max = j.max_seats;
+    if (parseInt(seatsInput.value || "0", 10) > j.max_seats) {
+      seatsInput.value = j.max_seats;
+    }
+  }
+
+  document.getElementById("start").onchange = computeMaxSeats;
+  document.getElementById("end").onchange = computeMaxSeats;
+
+  document.getElementById("btnCreate").onclick = async () => {
+    msg.textContent = "";
+    ok.textContent = "";
+
+    const seats = parseInt(document.getElementById("seats").value, 10);
+    const starts_at = toUtcIsoZ(document.getElementById("start").value);
+    const ends_at = toUtcIsoZ(document.getElementById("end").value);
+
+    const payload = { seats, starts_at, ends_at, selection_type, selection_key };
+
+    const r = await fetch("/teacher/bookings", { method:"POST", headers: authHeaders(), body: JSON.stringify(payload) });
+    const j = await r.json().catch(()=>({}));
+
+    if (!r.ok) {
+      msg.textContent = j.detail || `Create failed (HTTP ${r.status})`;
+      return;
+    }
+
+    ok.textContent =
+      `Booking created.\nJoin code: ${j.join_code}\nStudent join: /ui/\nAllowed labs: ${j.allowed_labs.join(", ")}\nRAM per seat: ${j.ram_mb_per_seat} MB`;
+  };
+
+  // try compute initially if teacher already filled inputs
+  computeMaxSeats();
+</script>
+</body>
+</html>

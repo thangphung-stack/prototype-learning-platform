@@ -1,0 +1,7 @@
+{
+  "title": "Static Routing (3 Nodes)",
+  "description": "Use the middle node as a router. Configure static routes and verify end-to-end reachability.",
+  "ram_mb": 550,
+  "topic": "routing-basics",
+  "level": "basic"
+}

@@ -1,0 +1,190 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Teacher Dashboard</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 1100px; margin: 40px auto; }
+    input, button { font-size: 16px; padding: 10px; }
+    table { border-collapse: collapse; width: 100%; margin-top: 20px; }
+    th, td { border-bottom: 1px solid #ddd; padding: 10px; text-align: left; }
+    .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: end; }
+    .err { color: #b00020; white-space: pre-wrap; margin-top: 10px; }
+    .ok { color: #1b5e20; white-space: pre-wrap; margin-top: 10px; }
+    code { background:#f3f3f3; padding:2px 6px; border-radius:6px; }
+  </style>
+</head>
+<body>
+  <h1>Teacher Dashboard</h1>
+
+  <div class="row">
+    <div>
+      <label>Seats</label><br/>
+      <input id="seats" type="number" value="30" min="1" max="200" />
+    </div>
+    <div>
+      <label>Start (local)</label><br/>
+      <input id="start" type="datetime-local" />
+    </div>
+    <div>
+      <label>End (local)</label><br/>
+      <input id="end" type="datetime-local" />
+    </div>
+    <button id="btnCreate">Create booking</button>
+    <button id="btnLogout">Logout</button>
+  </div>
+
+  <div id="msg" class="err"></div>
+  <div id="ok" class="ok"></div>
+
+  <h2>My bookings</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Join code</th>
+        <th>Seats</th>
+        <th>Start (Local)</th>
+        <th>End (Local)</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody id="rows"></tbody>
+  </table>
+
+  <script>
+    const msg = document.getElementById("msg");
+    const ok = document.getElementById("ok");
+    const rows = document.getElementById("rows");
+
+    function token() {
+      return localStorage.getItem("teacher_token");
+    }
+
+    function authHeaders() {
+      const t = token();
+      return { "Authorization": `Bearer ${t}`, "Content-Type": "application/json" };
+    }
+
+    function setMsg(t){ msg.textContent = t || ""; ok.textContent = ""; }
+    function setOk(t){ ok.textContent = t || ""; msg.textContent = ""; }
+
+    function fmtUtcToLocal(utcIsoZ) {
+    if (!utcIsoZ) return "";
+    const d = new Date(utcIsoZ); // "…Z" => treated as UTC
+    return new Intl.DateTimeFormat("de-DE", {
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+    }).format(d);
+    }
+    
+    function toUtcIsoNoZ(datetimeLocalValue) {
+      // datetime-local gives "YYYY-MM-DDTHH:mm"
+      if (!datetimeLocalValue) return null;
+      const d = new Date(datetimeLocalValue);
+      // convert to ISO and drop Z + milliseconds -> "YYYY-MM-DDTHH:MM:SS"
+      return d.toISOString().slice(0, 19) + "Z";
+    }
+
+    async function loadBookings() {
+      rows.innerHTML = "<tr><td colspan='6'>Loading…</td></tr>";
+      const r = await fetch("/teacher/bookings", { headers: authHeaders() });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        setMsg(j.detail || `Failed to load bookings (HTTP ${r.status})`);
+        rows.innerHTML = "";
+        return;
+      }
+
+      rows.innerHTML = "";
+      for (const b of j.bookings) {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>${b.id}</td>
+          <td><code>${b.join_code}</code></td>
+          <td>${b.seats}</td>
+          <td>${fmtUtcToLocal(b.starts_at)}</td>
+          <td>${fmtUtcToLocal(b.ends_at)}</td>
+          <td></td>
+        `;
+
+        const td = tr.querySelector("td:last-child");
+
+        const btnClose = document.createElement("button");
+        btnClose.textContent = "Close (cleanup)";
+        btnClose.onclick = async () => {
+          if (!confirm("Close booking and delete all workspace dirs?")) return;
+          const rr = await fetch(`/teacher/bookings/${b.id}/close`, { method:"POST", headers: authHeaders() });
+          const jj = await rr.json().catch(() => ({}));
+          if (!rr.ok) {
+            setMsg(jj.detail || `Close failed (HTTP ${rr.status})`);
+            return;
+          }
+          setOk(JSON.stringify(jj, null, 2));
+          loadBookings();
+        };
+
+        const btnShow = document.createElement("button");
+        btnShow.textContent = "Details";
+        btnShow.onclick = async () => {
+          const rr = await fetch(`/teacher/bookings/${b.id}`, { headers: authHeaders() });
+          const jj = await rr.json().catch(() => ({}));
+          if (!rr.ok) {
+            setMsg(jj.detail || `Details failed (HTTP ${rr.status})`);
+            return;
+          }
+          setOk(
+            `Join page: /ui/\nJoin code: ${jj.join_code}\nAssigned: ${jj.assigned_count}/${jj.seats}`
+          );
+        };
+
+        td.appendChild(btnShow);
+        td.appendChild(document.createTextNode(" "));
+        td.appendChild(btnClose);
+
+        rows.appendChild(tr);
+      }
+    }
+
+    document.getElementById("btnCreate").onclick = async () => {
+      setMsg("");
+
+      const seats = parseInt(document.getElementById("seats").value, 10);
+      const starts_at = toUtcIsoNoZ(document.getElementById("start").value);
+      const ends_at = toUtcIsoNoZ(document.getElementById("end").value);
+
+      const payload = { seats, starts_at, ends_at };
+
+      const r = await fetch("/teacher/bookings", {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify(payload),
+      });
+
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        setMsg(j.detail || `Create booking failed (HTTP ${r.status})`);
+        return;
+      }
+
+      setOk(`Created booking.\nJoin code: ${j.join_code}\nStudent join: /ui/`);
+      loadBookings();
+    };
+
+    document.getElementById("btnLogout").onclick = () => {
+      localStorage.removeItem("teacher_token");
+      window.location.href = "/ui/teacher_login.html";
+    };
+
+    // protect page
+    if (!token()) {
+      window.location.href = "/ui/teacher_login.html";
+    } else {
+      loadBookings();
+    }
+  </script>
+</body>
+</html>
