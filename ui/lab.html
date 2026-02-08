@@ -126,7 +126,10 @@
     function loadTopologyImage() {
       const img = document.getElementById("topoImg");
       const fallback = document.getElementById("topoFallback");
-      img.src = `/labs/${encodeURIComponent(lab)}/topology.png?ts=${Date.now()}`;
+      img.style.display = "block";
+      fallback.style.display = "none";
+
+      img.src = `/lab-assets/${encodeURIComponent(lab)}/topology.png?ts=${Date.now()}`;
       img.onerror = () => {
         img.style.display = "none";
         fallback.style.display = "block";
@@ -166,12 +169,30 @@
 
     async function showStatus() {
       if (!(await guardOrKick())) return;
+
       statusText.textContent = "Loading…";
       statusDialog.showModal();
 
       const r = await fetch(`/me/status/${encodeURIComponent(lab)}`, { credentials: "include" });
       const j = await r.json().catch(() => ({}));
-      statusText.textContent = JSON.stringify(j, null, 2);
+
+      if (!r.ok) {
+        statusText.textContent = j.detail || `Status failed (HTTP ${r.status})`;
+        return;
+      }
+
+      if (j.error) {
+        statusText.textContent = `Error: ${j.error}\n\n${JSON.stringify(j.raw, null, 2)}`;
+        return;
+      }
+
+      const lines = [];
+      lines.push(`Running: ${j.running}`);
+      lines.push("");
+      for (const n of (j.nodes || [])) {
+        lines.push(`${n.node} | ${n.state} | ${n.ipv4 || ""} | ${n.status || ""}`);
+      }
+      statusText.textContent = lines.join("\n");
     }
 
     async function doReset() {
@@ -204,21 +225,22 @@
     async function showInstruction() {
       if (!(await guardOrKick())) return;
 
-      instrText.textContent = "No instructions yet. Add labs/<lab>/instructions.md later.";
+      instrText.textContent = "Loading…";
       instrDialog.showModal();
 
-      // Optional later:
-      // If you add an endpoint or static file for instructions, fetch it here.
-      // For now this is a placeholder.
+      const r = await fetch(`/lab-assets/${encodeURIComponent(lab)}/instructions`, { credentials: "include" });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        instrText.textContent = j.detail || `No instructions (HTTP ${r.status})`;
+        return;
+      }
+      instrText.textContent = await r.text();
     }
 
     document.getElementById("btnStatus").onclick = showStatus;
     document.getElementById("btnReset").onclick = doReset;
     document.getElementById("btnDestroy").onclick = doDestroy;
-    document.getElementById("btnInstr").onclick = async () => {
-      if (!(await guardOrKick())) return;
-      instrDialog.showModal();
-    };
+    document.getElementById("btnInstr").onclick = showInstruction;
 
     document.getElementById("closeStatus").onclick = () => statusDialog.close();
     document.getElementById("closeInstr").onclick = () => instrDialog.close();

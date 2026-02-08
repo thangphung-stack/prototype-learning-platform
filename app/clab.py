@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import subprocess
 from typing import Optional, Sequence
+import json
 
 
 @dataclass
@@ -103,3 +104,18 @@ def inspect(topology_file: Path, name: Optional[str] = None) -> ClabResult:
     cmd = ["clab", "-t", str(topology_file), "inspect"]
 
     return _run(cmd, cwd=topology_file.parent)
+
+def inspect_json(topology_file: Path) -> dict:
+    if not topology_file.exists():
+        return {"error": f"Topology file not found: {topology_file}"}
+
+    cmd = ["clab", "-t", str(topology_file), "inspect", "--format", "json"]
+    r = _run(cmd, cwd=topology_file.parent)
+
+    if r.return_code != 0:
+        return {"error": r.stderr or "inspect failed", "raw": r.__dict__}
+
+    try:
+        return json.loads(r.stdout)
+    except Exception as e:
+        return {"error": f"Failed to parse inspect json: {e}", "raw_stdout": r.stdout}

@@ -32,6 +32,7 @@ from app.catalog import load_catalog, topics_modes
 from dataclasses import dataclass
 import threading
 import time
+from fastapi.responses import FileResponse, PlainTextResponse
 
 app = FastAPI()
 
@@ -381,9 +382,7 @@ def close_booking_internal(db: Session, booking: Booking) -> dict:
 
         # try destroy for ANY yml in workspace (safer than relying on .active_lab)
         for yml in ws.path.glob("*.yml"):
-            lab = yml.stem
-            clab_name = workspace.make_clab_name(ws, lab)
-            clab.destroy(yml, name=clab_name, cleanup=True)
+            clab.destroy(yml, cleanup=True)            
             destroyed_attempts += 1
 
         # delete workspace dir
@@ -638,6 +637,28 @@ def me_reset(lab_name: str, ctx: MeContext = Depends(get_me_context)):
     r = clab.deploy(ws_yaml, reconfigure=True)
     return {"workspace_id": ws.id, "clab_name": clab_name, **r.__dict__}
 
+@app.get("/lab-assets/{lab_name}/topology.png")
+def lab_topology_png(lab_name: str, ctx: MeContext = Depends(get_me_context)):
+    allowed = json.loads(ctx.booking.allowed_labs_json or "[]")
+    if lab_name not in allowed:
+        raise HTTPException(status_code=403, detail="Lab not allowed for this booking")
+    
+    p = LABS_DIR / lab_name / "topology.png"
+    if not p.exists():
+        raise HTTPException(status_code=404, detail="Topology image not found")
+    return FileResponse(str(p), media_type="image/png")
+
+@app.get("/lab-assets/{lab_name}/instructions")
+def lab_instructions(lab_name: str, ctx: MeContext = Depends(get_me_context)):
+    allowed = json.loads(ctx.booking.allowed_labs_json or "[]")
+    if lab_name not in allowed:
+        raise HTTPException(status_code=403, detail="Lab not allowed for this booking")
+    
+    p = LABS_DIR / lab_name / "instructions.md"
+    if not p.exists():
+        raise HTTPException(status_code=404, detail="Instructions not found")
+    
+    return PlainTextResponse(p.read_text(encoding="utf-8"))
 
 @app.get("/me/status/{lab_name}")
 def me_status(lab_name: str, ctx: MeContext = Depends(get_me_context)):
@@ -653,15 +674,50 @@ def me_status(lab_name: str, ctx: MeContext = Depends(get_me_context)):
             "lab_name": lab_name,
             "yaml_present": False,
             "running": False,
-            "inspect": None
+            "nodes": [],
         }
-    r = clab.inspect(ws_yaml)
+    
+    data = clab.inspect_json(ws_yaml)
+
+    # If inspect_json returned an error dict
+    if "error" in data:
+        return {
+            "workspace_id": ws.id,
+            "lab_name": lab_name,
+            "yaml_present": True,
+            "running": False,
+            "error": data["error"],
+            "raw": data.get("raw") or data.get("raw_stdout"),
+            "nodes": [],
+        }
+
+    if isinstance(data, dict) and len(data) >= 1:
+        first_key = next(iter(data.keys()))
+        nodes = data.get(first_key, [])
+    else:
+        nodes = []
+
+    # Normalize + return only the important fields 
+    norm = []
+    for n in nodes:
+        norm.append({
+            "node": n.get("name"),
+            "kind": n.get("kind"),
+            "image": n.get("image"),
+            "state": n.get("state"),
+            "status": n.get("status"),
+            "ipv4": n.get("ipv4_address"),
+            "ipv6": n.get("ipv6_address"),
+        })
+
+    running = any(x.get("state") == "running" for x in norm)
+
     return {
         "workspace_id": ws.id,
         "lab_name": lab_name,
         "yaml_present": True,
-        "running": (r.return_code == 0),
-        "inspect": r.__dict__
+        "running": running,
+        "nodes": norm,
     }
 
 @app.post("/logout")
