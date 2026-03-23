@@ -3,6 +3,8 @@
 <head>
   <meta charset="utf-8" />
   <title>Lab Control</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css">
+  <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
   <style>
     body { font-family: system-ui, sans-serif; max-width: 1100px; margin: 30px auto; }
     .row { display: flex; gap: 10px; flex-wrap: wrap; margin: 12px 0; }
@@ -41,9 +43,6 @@
   <div class="card">
     <h2>Nodes</h2>
     <div id="nodes" class="nodes">Loading nodes…</div>
-    <p style="margin-top:10px; color:#555;">
-      Terminal pop-up will be implemented with WebSockets later.
-    </p>
   </div>
 
   <!-- Status modal -->
@@ -64,16 +63,33 @@
     </div>
   </dialog>
 
-  <!-- Node terminal placeholder modal -->
+  <!-- Node terminal modal -->
   <dialog id="nodeDialog">
     <h3 id="nodeTitle">Node</h3>
-    <p>Terminal will appear here later (WebSocket).</p>
+    <div id="term" style="height: 420px; border-radius: 10px; overflow:hidden; border:1px solid #ddd;"></div>
     <div class="dialog-actions">
       <button id="closeNode">Close</button>
     </div>
   </dialog>
 
   <script>
+    let xterm = null;
+    let wsSock = null;
+
+    function wsClose() {
+      if (wsSock) {
+        try { wsSock.close(); } catch (e) {}
+        wsSock = null;
+      }
+    }
+
+    function termDestroy() {
+      if (xterm) {
+        try { xterm.dispose(); } catch(e) {}
+        xterm = null;
+      }
+    }
+
     const params = new URLSearchParams(window.location.search);
     const lab = params.get("lab");
     const msg = document.getElementById("msg");
@@ -161,7 +177,39 @@
         b.onclick = async () => {
           if (!await guardOrKick()) return;
           nodeTitle.textContent = `Node: ${n}`;
+
+          // Clean up any previous terminal
+          wsClose();
+          termDestroy();
+
           nodeDialog.showModal();
+
+          // Mount xterm
+          xterm = new Terminal({ cursorBlink: true, rows: 24, cols: 100 });
+          xterm.open(document.getElementById("term"));
+
+          // Open PTY websocket
+          const proto = location.protocol === "https:" ? "wss" : "ws";
+          const url = `${proto}://${location.host}/ws/pty/${encodeURIComponent(lab)}/${encodeURIComponent(n)}`;
+          wsSock = new WebSocket(url);
+          wsSock.binaryType = "arraybuffer";
+
+          wsSock.onopen = () => xterm.write("\r\n\x1b[32mConnected\x1b[0m\r\n");
+          wsSock.onmessage = (ev) => {
+            if (ev.data instanceof ArrayBuffer) {
+              xterm.write(new Uint8Array(ev.data));
+            } else {
+              xterm.write(ev.data);
+            }
+          };
+          wsSock.onclose = () => xterm.write("\r\n\x1b[31m[disconnected]\x1b[0m\r\n");
+          wsSock.onerror = () => xterm.write("\r\n\x1b[31m[websocket error]\x1b[0m\r\n");
+
+          xterm.onData((data) => {
+            if (wsSock && wsSock.readyState === WebSocket.OPEN) {
+              wsSock.send(data);
+            }
+          });
         };
         nodesEl.appendChild(b);
       }
@@ -244,7 +292,11 @@
 
     document.getElementById("closeStatus").onclick = () => statusDialog.close();
     document.getElementById("closeInstr").onclick = () => instrDialog.close();
-    document.getElementById("closeNode").onclick = () => nodeDialog.close();
+    document.getElementById("closeNode").onclick = () => {
+      nodeDialog.close();
+      wsClose();
+      termDestroy();
+    };
 
     (async () => {
       if (!(await guardOrKick())) return;

@@ -10,7 +10,10 @@ Directories structure:
 - labs/ contains template YAML topologies
 - data/lab-runs/ contains workspace folders (runtime) and per-workspace YAML copies
 """
-from fastapi import FastAPI, HTTPException, Response, Depends, Cookie, Request
+from fastapi import FastAPI, HTTPException, Response, Depends, Cookie, Request, WebSocket, WebSocketDisconnect
+import asyncio
+import os
+import pty
 from pathlib import Path
 import shutil
 from pydantic import BaseModel
@@ -536,6 +539,208 @@ def get_me_context(request: Request, db: Session = Depends(get_db)) -> MeContext
     
     ws = workspace.ensure_workspace_exists(RUNS_DIR, slot.ws_id)
     return MeContext(ws=ws, booking=booking, slot=slot, sess=sess)
+
+def get_me_context_ws(websocket: WebSocket, db: Session) -> MeContext:
+    sid = websocket.cookies.get(SESSION_COOKIE)
+    if not sid:
+        raise HTTPException(status_code=401, detail="not joined")
+
+    now = now_utc_naive()
+
+    sess = db.execute(select(StudentSession).where(StudentSession.session_id == sid)).scalar_one_or_none()
+    if not sess or sess.expires_at <= now:
+        raise HTTPException(status_code=401, detail="Session expired")
+
+    slot = db.get(WorkspaceSlot, sess.workspace_slot_id)
+    if not slot:
+        raise HTTPException(status_code=401, detail="Workspace missing")
+
+    booking = db.get(Booking, slot.booking_id)
+    if not booking:
+        raise HTTPException(status_code=401, detail="Booking missing")
+
+    if booking.closed_at is not None:
+        raise HTTPException(status_code=403, detail="Booking is closed")
+    if booking.starts_at and now < booking.starts_at:
+        raise HTTPException(status_code=403, detail="Booking/Class has not started yet")
+    if booking.ends_at and now > booking.ends_at:
+        raise HTTPException(status_code=403, detail="Booking/Class has ended")
+
+    ws = workspace.ensure_workspace_exists(RUNS_DIR, slot.ws_id)
+    return MeContext(ws=ws, booking=booking, slot=slot, sess=sess)
+
+
+def resolve_container_name(ws_yaml: Path, node: str) -> str:
+    data = clab.inspect_json(ws_yaml)
+    if "error" in data:
+        raise HTTPException(status_code=409, detail=f"Inspect failed: {data['error']}")
+
+    lab_key = next(iter(data.keys()), None)
+    if not lab_key:
+        raise HTTPException(status_code=409, detail="Inspect JSON empty")
+
+    nodes = data.get(lab_key, [])
+    for n in nodes:
+        cname = n.get("name")
+        if cname and cname.endswith(f"-{node}"):
+            return cname
+
+    raise HTTPException(status_code=404, detail=f"Node not found: {node}")
+
+
+@app.websocket("/ws/terminal/{lab_name}/{node_name}")
+async def ws_terminal(websocket: WebSocket, lab_name: str, node_name: str):
+    await websocket.accept()
+
+    db = SessionLocal()
+    proc = None
+    try:
+        ctx = get_me_context_ws(websocket, db)
+
+        allowed = json.loads(ctx.booking.allowed_labs_json or "[]")
+        if lab_name not in allowed:
+            await websocket.send_text("Error: lab not allowed for this booking\n")
+            await websocket.close(code=1008)
+            return
+
+        active = workspace.get_active_lab(ctx.ws)
+        if active != lab_name:
+            await websocket.send_text("Error: lab not active. Deploy it first.\n")
+            await websocket.close(code=1008)
+            return
+
+        ws_yaml = workspace.workspace_yaml_path(ctx.ws, lab_name)
+        if not ws_yaml.exists():
+            await websocket.send_text("Error: workspace topology not found\n")
+            await websocket.close(code=1008)
+            return
+
+        container_name = resolve_container_name(ws_yaml, node_name)
+        proc = await asyncio.create_subprocess_exec(
+            "docker", "exec", "-i", container_name, "sh",
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+
+        await websocket.send_text(f"Connected to {container_name}\n")
+
+        async def pump_proc_to_ws():
+            while True:
+                chunk = await proc.stdout.read(1024)
+                if not chunk:
+                    break
+                await websocket.send_text(chunk.decode(errors="ignore"))
+
+        async def pump_ws_to_proc():
+            while True:
+                msg = await websocket.receive_text()
+                if proc.stdin:
+                    proc.stdin.write(msg.encode())
+                    await proc.stdin.drain()
+
+        t1 = asyncio.create_task(pump_proc_to_ws())
+        t2 = asyncio.create_task(pump_ws_to_proc())
+        done, pending = await asyncio.wait({t1, t2}, return_when=asyncio.FIRST_COMPLETED)
+
+        for t in pending:
+            t.cancel()
+
+    except WebSocketDisconnect:
+        pass
+    except HTTPException as e:
+        try:
+            await websocket.send_text(f"Error: {e.detail}\n")
+            await websocket.close(code=1008)
+        except Exception:
+            pass
+    except Exception as e:
+        try:
+            await websocket.send_text(f"Error: {e}\n")
+            await websocket.close(code=1011)
+        except Exception:
+            pass
+    finally:
+        if proc and proc.returncode is None:
+            proc.terminate()
+        db.close()
+
+
+@app.websocket("/ws/pty/{lab_name}/{node_name}")
+async def ws_pty(websocket: WebSocket, lab_name: str, node_name: str):
+    await websocket.accept()
+    db = SessionLocal()
+
+    pid = None
+    master_fd = None
+
+    try:
+        ctx = get_me_context_ws(websocket, db)
+
+        allowed = json.loads(ctx.booking.allowed_labs_json or "[]")
+        if lab_name not in allowed:
+            await websocket.send_text("Error: lab not allowed\n")
+            await websocket.close(code=1008)
+            return
+
+        active = workspace.get_active_lab(ctx.ws)
+        if active != lab_name:
+            await websocket.send_text("Error: lab not active. Deploy it first.\n")
+            await websocket.close(code=1008)
+            return
+
+        ws_yaml = workspace.workspace_yaml_path(ctx.ws, lab_name)
+        container_name = resolve_container_name(ws_yaml, node_name)
+
+        pid, master_fd = pty.fork()
+
+        if pid == 0:
+            os.execvp("docker", ["docker", "exec", "-it", container_name, "sh"])
+
+        os.set_blocking(master_fd, False)
+
+        async def pty_to_ws():
+            while True:
+                await asyncio.sleep(0)
+                try:
+                    data = os.read(master_fd, 4096)
+                    if not data:
+                        break
+                    await websocket.send_bytes(data)
+                except BlockingIOError:
+                    await asyncio.sleep(0.01)
+                except OSError:
+                    break
+
+        async def ws_to_pty():
+            while True:
+                msg = await websocket.receive()
+                if msg["type"] == "websocket.disconnect":
+                    break
+                elif msg["type"] == "websocket.receive":
+                    if "bytes" in msg and msg["bytes"] is not None:
+                        os.write(master_fd, msg["bytes"])
+                    elif "text" in msg and msg["text"] is not None:
+                        os.write(master_fd, msg["text"].encode())
+
+        t1 = asyncio.create_task(pty_to_ws())
+        t2 = asyncio.create_task(ws_to_pty())
+        done, pending = await asyncio.wait({t1, t2}, return_when=asyncio.FIRST_COMPLETED)
+
+        for t in pending:
+            t.cancel()
+
+    except WebSocketDisconnect:
+        pass
+    finally:
+        if master_fd is not None:
+            try: os.close(master_fd)
+            except: pass
+        if pid is not None:
+            try: os.kill(pid, 15)
+            except: pass
+        db.close()
+
 
 @app.get("/me/guard")
 def me_guard(ctx: MeContext = Depends(get_me_context)):
